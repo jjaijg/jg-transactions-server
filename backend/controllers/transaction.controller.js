@@ -5,6 +5,17 @@ const Transaction = require("../models/transaction.model");
 const Category = require("../models/category.model");
 
 const LIMIT = process.env.DOC_LIMIT || 5;
+const OPERATIONS = {
+  equals: "$eq",
+  is: "$eq",
+  "=": "$eq",
+  "!=": "$ne",
+  ">": "$gt",
+  ">=": "$gte",
+  "<": "$lt",
+  "<=": "$lte",
+  contains: "$regex",
+};
 
 const getTransactionAmount = asyncHandler(async (req, res, next) => {
   //PAGINATION -- set the options for pagination
@@ -43,16 +54,55 @@ const getTransactionAmount = asyncHandler(async (req, res, next) => {
 
   // Filter by date
   //FILTER BY DATE -- FOURTH STAGE
+  // if (req.query.start) {
+  //   let start = moment(req.query.start).startOf("day");
+  //   let end = req.query.end ? new Date(req.query.end) : new Date(); // add 1 day
+
+  //   aggregate_options.push({
+  //     $match: { date: { $gte: new Date(start), $lte: end } },
+  //   });
+  // } else if (req.query.end) {
+  //   aggregate_options.push({
+  //     $match: { date: { $lte: new Date(req.query.end) } },
+  //   });
+  // }
   if (req.query.start) {
-    let start = moment(req.query.start).startOf("day");
+    let start = moment(req.query.start).startOf("day").format("YYYY-MM-DD");
     let end = req.query.end ? new Date(req.query.end) : new Date(); // add 1 day
+    end = moment(end).format("YYYY-MM-DD");
 
     aggregate_options.push({
-      $match: { date: { $gte: new Date(start), $lte: end } },
+      $match: {
+        $expr: {
+          $and: [
+            {
+              $gte: [
+                { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+                start,
+              ],
+            },
+            {
+              $lte: [
+                { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+                end,
+              ],
+            },
+          ],
+        },
+        // date: { $gte: new Date(start), $lte: end },
+      },
     });
   } else if (req.query.end) {
     aggregate_options.push({
-      $match: { date: { $lte: new Date(req.query.end) } },
+      $match: {
+        $expr: {
+          $lte: [
+            { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+            moment(req.query.end).format("YYYY-MM-DD"),
+          ],
+          // new Date(req.query.end)
+        },
+      },
     });
   }
 
@@ -342,6 +392,18 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
       },
     });
   }
+  //3b - a
+  // FILTER BY Category name
+  if (req.query.category_name) {
+    let { category_name, op } = req.query;
+    op = op ? op : "contains";
+    const rgx = new RegExp(category_name, "gmi");
+    const matchObj = { "categories.name": { [OPERATIONS[op]]: rgx } };
+    console.log(matchObj);
+    aggregate_options.push({
+      $match: matchObj,
+    });
+  }
 
   //3c
   //FILTER BY EventID -- THIRD STAGE - use mongoose.Types.ObjectId() to recreate the moogoses object id
@@ -356,30 +418,110 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
   //3d
   //FILTER BY Type -- THIRD STAGE -
   if (req.query.type) {
+    let { type, op } = req.query;
+    op = op ? op : "contains";
+    const rgx = new RegExp(type, "gmi");
+    const matchObj = { type: { [OPERATIONS[op]]: rgx } };
+    console.log(matchObj);
     aggregate_options.push({
-      $match: {
-        type: req.query.type,
-      },
+      $match: matchObj,
+    });
+  }
+  //3d a
+  //FILTER BY amount -
+  if (req.query.amount) {
+    let { amount, op } = req.query;
+    op = op ? op : ">=";
+    const matchObj = { amount: { [OPERATIONS[op]]: parseFloat(amount) } };
+    console.log(matchObj);
+    aggregate_options.push({
+      $match: matchObj,
+    });
+  }
+  //3d b
+  //FILTER BY amount -
+  if (req.query.description) {
+    let { description, op } = req.query;
+    op = op ? op : "contains";
+    const rgx = new RegExp(description, "gmi");
+    const matchObj = { description: { [OPERATIONS[op]]: rgx } };
+    console.log(matchObj);
+    aggregate_options.push({
+      $match: matchObj,
     });
   }
 
   //4
   //FILTER BY DATE -- FOURTH STAGE
-  if (req.query.start) {
-    let start = moment(req.query.start).startOf("day");
-    let end = req.query.end ? new Date(req.query.end) : new Date(); // add 1 day
+  if (req.query.date) {
+    console.log(
+      "date filter : ",
+      moment(new Date(req.query.date)).format("YYYY-MM-DD")
+    );
+    aggregate_options.push({
+      $match: {
+        $expr: {
+          [OPERATIONS[req.query.op]]: [
+            { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+            moment(new Date(req.query.date)).format("YYYY-MM-DD"),
+          ],
+        },
 
-    aggregate_options.push({
-      $match: { date: { $gte: new Date(start), $lte: end } },
+        // date: { [OPERATIONS[req.query.op]]: new Date(req.query.date) },
+      },
     });
-  } else if (req.query.end) {
-    aggregate_options.push({
-      $match: { date: { $lte: new Date(req.query.end) } },
-    });
-  } else if (!search) {
-    aggregate_options.push({
-      $match: { date: { $lte: new Date() } },
-    });
+  } else {
+    if (req.query.start) {
+      let start = moment(req.query.start).startOf("day").format("YYYY-MM-DD");
+      let end = req.query.end ? new Date(req.query.end) : new Date(); // add 1 day
+      end = moment(end).format("YYYY-MM-DD");
+
+      console.log("start, end : ", start, end);
+      aggregate_options.push({
+        $match: {
+          $expr: {
+            $and: [
+              {
+                $gte: [
+                  { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+                  start,
+                ],
+              },
+              {
+                $lte: [
+                  { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+                  end,
+                ],
+              },
+            ],
+          },
+          // date: { $gte: new Date(start), $lte: end },
+        },
+      });
+    } else if (req.query.end) {
+      aggregate_options.push({
+        $match: {
+          $expr: {
+            $lte: [
+              { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+              moment(req.query.end).format("YYYY-MM-DD"),
+            ],
+            // new Date(req.query.end)
+          },
+        },
+      });
+    } else if (!search) {
+      aggregate_options.push({
+        $match: {
+          $expr: {
+            $lte: [
+              { $dateToString: { date: "$date", format: "%Y-%m-%d" } },
+              moment(new Date()).format("YYYY-MM-DD"),
+            ],
+          },
+        },
+      });
+    }
   }
 
   //4
@@ -406,6 +548,7 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
   let sort_order =
     req.query.sort_order && req.query.sort_order === "asc" ? 1 : -1;
   let sort_by = req.query.sort_by || "date";
+  console.log("sort details : ", sort_by, sort_order);
   aggregate_options.push({
     $sort: {
       [sort_by]: sort_order,
@@ -525,7 +668,7 @@ const updateTransaction = asyncHandler(async (req, res, next) => {
 
   const updatedTransaction = await Transaction.findByIdAndUpdate(
     transactionId,
-    req.body,
+    { ...req.body, date: moment(new Date(req.body.date)).format("YYYY-MM-DD") },
     {
       new: true,
     }
