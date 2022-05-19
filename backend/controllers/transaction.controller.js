@@ -543,19 +543,6 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
     });
   }
 
-  //6
-  //SORTING -- FIFTH STAGE
-  let sort_order =
-    req.query.sort_order && req.query.sort_order === "asc" ? 1 : -1;
-  let sort_by = req.query.sort_by || "date";
-  console.log("sort details : ", sort_by, sort_order);
-  aggregate_options.push({
-    $sort: {
-      [sort_by]: sort_order,
-      _id: -1,
-    },
-  });
-
   //SELECT FIELDS
   aggregate_options.push({
     $project: {
@@ -568,6 +555,19 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
       category: { $ifNull: ["$categories._id", null] },
       category_name: { $ifNull: ["$categories.name", null] },
       createdAt: 1,
+    },
+  });
+
+  //6
+  //SORTING -- FIFTH STAGE
+  let sort_order =
+    req.query.sort_order && req.query.sort_order === "asc" ? 1 : -1;
+  let sort_by = req.query.sort_by || "date";
+  console.log("sort details : ", sort_by, sort_order);
+  aggregate_options.push({
+    $sort: {
+      [sort_by]: sort_order,
+      _id: -1,
     },
   });
 
