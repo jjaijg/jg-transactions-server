@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
-const aggregatePaginate = require('mongoose-aggregate-paginate-v2');
+const aggregatePaginate = require("mongoose-aggregate-paginate-v2");
+const moment = require("moment");
 
 const Schema = mongoose.Schema;
 
@@ -30,7 +31,7 @@ const transactionSchema = Schema(
     },
     date: {
       type: Date,
-      default: new Date(),
+      default: moment(new Date()).format("YYYY-MM-DD"),
     },
   },
   {
@@ -38,7 +39,6 @@ const transactionSchema = Schema(
   }
 );
 
-
-transactionSchema.plugin(aggregatePaginate)
+transactionSchema.plugin(aggregatePaginate);
 
 module.exports = mongoose.model("Transaction", transactionSchema);
