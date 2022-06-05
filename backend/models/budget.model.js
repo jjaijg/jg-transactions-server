@@ -6,6 +6,10 @@ const Schema = mongoose.Schema;
 
 const budgetSchema = Schema(
   {
+    budgetId: {
+      type: String,
+      required: [true, "Please enter budget id"],
+    },
     name: {
       type: String,
       required: [true, "Please enter budget name"],
@@ -18,15 +22,12 @@ const budgetSchema = Schema(
       required: [true, "user details required!"],
       ref: "User",
     },
-    categories: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: [true, "Category is required"],
-      ref: "Category",
-    },
-    date: {
-      type: Date,
-      default: moment(new Date()).format("YYYY-MM-DD"),
-    },
+    categories: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "BudgetCategory",
+      },
+    ],
   },
   {
     timestamps: true,

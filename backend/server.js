@@ -15,8 +15,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cors());
 
+app.get("api/v1", (req, res) => {
+  return res.json({message: "Budget tracker api!"})
+})
+
 app.use("/api/v1/users", require("./routes/user.routes"));
+app.use("/api/v1/budgets", require("./routes/budget.routes"));
 app.use("/api/v1/categories", require("./routes/category.routes"));
+app.use("/api/v1/budget-categories", require("./routes/budgetCategory.routes"));
 app.use("/api/v1/transactions", require("./routes/transaction.routes"));
 
 app.use(errorHandler);

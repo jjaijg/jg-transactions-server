@@ -4,11 +4,22 @@ const Schema = mongoose.Schema;
 
 const budgetCategorySchema = Schema(
   {
+    budget: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: [true, "Budget is required"],
+      ref: "Budget",
+    },
     category: {
       type: mongoose.Schema.Types.ObjectId,
       required: [true, "Category is required"],
       ref: "Category",
     },
+    transactions: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Transaction",
+      },
+    ],
     planned: {
       type: Number,
       required: [true, "Please enter planned amount"],
@@ -32,6 +43,9 @@ const budgetCategorySchema = Schema(
   }
 );
 
-// budgetCategorySchema.index({ name: 1, user: -1 }, { unique: true });
+budgetCategorySchema.index(
+  { budget: 1, category: -1, user: -1 },
+  { unique: true }
+);
 
 module.exports = mongoose.model("BudgetCategory", budgetCategorySchema);

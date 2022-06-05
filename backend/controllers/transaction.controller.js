@@ -3,6 +3,12 @@ const moment = require("moment");
 const mongoose = require("mongoose");
 const Transaction = require("../models/transaction.model");
 const Category = require("../models/category.model");
+const {
+  addTxnToBudgets,
+  updateTxn,
+  removeTxnFromBudgets,
+} = require("./Utilities/transaction.helper");
+const { getDifference, getSame } = require("../utils");
 
 const LIMIT = process.env.DOC_LIMIT || 5;
 const OPERATIONS = {
@@ -370,10 +376,23 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
       as: "categories",
     },
   });
-  //deconstruct the $purchases array using $unwind(aggregation).
+  //deconstruct the $categories array using $unwind(aggregation).
   aggregate_options.push({
     $unwind: { path: "$categories", preserveNullAndEmptyArrays: true },
   });
+
+  // aggregate_options.push({
+  //   $lookup: {
+  //     from: "budgets",
+  //     localField: "budgets",
+  //     foreignField: "_id",
+  //     as: "budgets",
+  //   },
+  // });
+  // //deconstruct the $categories array using $unwind(aggregation).
+  // aggregate_options.push({
+  //   $unwind: { path: "$budgets", preserveNullAndEmptyArrays: true },
+  // });
 
   //3a
   //FILTER BY USERID -- SECOND STAGE - use mongoose.Types.ObjectId() to recreate the moogoses object id
@@ -552,6 +571,7 @@ const getFilteredTransactions = asyncHandler(async (req, res, next) => {
       type: 1,
       date: 1,
       description: 1,
+      budgets: 1,
       category: { $ifNull: ["$categories._id", null] },
       category_name: { $ifNull: ["$categories.name", null] },
       createdAt: 1,
@@ -625,23 +645,33 @@ const getTransactions = asyncHandler(async (req, res, next) => {
 // @route   POST /transactions
 // @access  Private
 const addTransaction = asyncHandler(async (req, res, next) => {
-  // if (!req.body.amount || !req.body.category || !req.body.type) {
-  //   res.status(400);
-  //   throw new Error("Please fill required fields!");
-  // }
+  try {
+    console.log("creation date : ", new Date(req.body.date));
+    const transaction = await Transaction.create({
+      ...req.body,
+      date: new Date(req.body.date),
+      user: req.user._id,
+    });
 
-  const transaction = await Transaction.create({
-    ...req.body,
-    user: req.user._id,
-  });
+    console.log(`created txn : ${transaction}`);
+    // console.log(new Date(req.body.date).toLocaleDateString());
+    // Add txn to budgetCategory
+    if (transaction.budgets.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...transaction.toObject(),
+        id: transaction._id,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
 
-  console.log(req.body.date);
-  console.log(new Date(req.body.date).toLocaleDateString());
-
-  res.status(201).json({
-    message: `Added new Transaction`,
-    data: transaction,
-  });
+    res.status(201).json({
+      message: `Added new Transaction`,
+      data: transaction,
+    });
+  } catch (error) {
+    res.status(400);
+    throw error;
+  }
 });
 
 // @desc    Update a Transaction
@@ -649,12 +679,23 @@ const addTransaction = asyncHandler(async (req, res, next) => {
 // @access  Private
 const updateTransaction = asyncHandler(async (req, res, next) => {
   const transactionId = req.params.id;
+  const { prevTxn, curTxn } = req.body;
+
+  let updatedTxn = null;
+  let isAmountUpdated = false;
+  let isCategoryUpdated = false;
+  let isBudgetUpdated = false;
+
+  const delBudgets = getDifference(prevTxn?.budgets, curTxn?.budgets);
+  const newBudgets = getDifference(curTxn?.budgets, prevTxn?.budgets);
+  const existingBudgets = getSame(curTxn?.budgets, prevTxn?.budgets);
+
   const transaction = await Transaction.findById(transactionId);
 
-  // if (!req.body.amount || !req.body.category || !req.body.type) {
-  //   res.status(400);
-  //   throw new Error("Please fill required fields!");
-  // }
+  if (!curTxn.amount || !curTxn.category || !curTxn.type) {
+    res.status(400);
+    throw new Error("Please fill required fields!");
+  }
 
   if (!transaction) {
     res.status(400);
@@ -666,16 +707,246 @@ const updateTransaction = asyncHandler(async (req, res, next) => {
     throw new Error(`Not authorized to access this transaction`);
   }
 
-  const updatedTransaction = await Transaction.findByIdAndUpdate(
-    transactionId,
-    { ...req.body, date: moment(new Date(req.body.date)).format("YYYY-MM-DD") },
-    {
-      new: true,
+  if (prevTxn.amount !== curTxn.amount) isAmountUpdated = true;
+  if (prevTxn.category !== curTxn.category) isCategoryUpdated = true;
+  if (delBudgets.length || newBudgets.length) isBudgetUpdated = true;
+
+  if (isBudgetUpdated && isCategoryUpdated && isAmountUpdated) {
+    // Logic
+    /*
+    1. update amount, category, budget
+    2. get del, exist, new budgets
+    3. unlink txn and subtract txn amount fro del and exist budget
+    4. Add txn to new and existing budgets
+    5. save
+    */
+    console.log("updating txn amount category & budget...");
+    console.log("existing budgets : ", existingBudgets);
+    console.log("del budgets : ", delBudgets);
+    console.log("new budgets : ", newBudgets);
+
+    const budgetsToBeUnlinked = [...existingBudgets, ...delBudgets];
+    const budgetsToBeLinked = [...newBudgets, ...existingBudgets];
+    if (budgetsToBeUnlinked.length) {
+      const unLinkedResult = await removeTxnFromBudgets({
+        ...prevTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeUnlinked,
+      });
+      console.log(`Unlink result : ${JSON.stringify(unLinkedResult)}`);
     }
-  );
+    if (budgetsToBeLinked.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeLinked,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
+  } else if (isBudgetUpdated && isCategoryUpdated) {
+    // Logic
+    /*
+    1. update category, budgets
+    2. get del, exist, new budgets
+    3. unlink txn and subtract txn amount fro del and exist budget
+    4. Add txn to new & exist budgets
+    5. save
+    */
+    console.log("updating txn category & budget...");
+
+    const budgetsToBeUnlinked = [...existingBudgets, ...delBudgets];
+    const budgetsToBeLinked = [...existingBudgets, ...newBudgets];
+    if (budgetsToBeUnlinked.length) {
+      const unLinkedResult = await removeTxnFromBudgets({
+        ...prevTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeUnlinked,
+      });
+      console.log(`Unlink result : ${unLinkedResult}`);
+    }
+    if (budgetsToBeLinked.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeLinked,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
+  } else if (isAmountUpdated && isCategoryUpdated) {
+    // Logic
+    /*
+    1. update amount, category
+    2. get del, exist, new budgets
+    3. unlink txn and subtract txn amount fro del and exist budget
+    4. Add txn to new & exist budgets
+    5. save
+    */
+    console.log("updating txn amount & category...");
+
+    const budgetsToBeUnlinked = [...existingBudgets, ...delBudgets];
+    const budgetsToBeLinked = [...existingBudgets];
+    if (budgetsToBeUnlinked.length) {
+      const unLinkedResult = await removeTxnFromBudgets({
+        ...prevTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeUnlinked,
+      });
+      console.log(`Unlink result : ${unLinkedResult}`);
+    }
+    if (budgetsToBeLinked.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeLinked,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
+  } else if (isAmountUpdated && isBudgetUpdated) {
+    // Logic
+    /*
+    1. update amount, budgets
+    2. get del, exist, new budgets
+    3. unlink txn and subtract txn amount for del budget
+    4. Add txn to new budgets
+    5. update txn amount = curAmount-prevAmount to existing budgets
+    6. save
+    */
+    console.log("updating txn amount & budget...");
+
+    const budgetsToBeUnlinked = [...delBudgets];
+    const budgetsToBeLinked = [...newBudgets];
+    const existingbudgetsAmountToBeUpdated = [...existingBudgets];
+    if (budgetsToBeUnlinked.length) {
+      const unLinkedResult = await removeTxnFromBudgets({
+        ...prevTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeUnlinked,
+      });
+      console.log(`Unlink result : ${unLinkedResult}`);
+    }
+    if (budgetsToBeLinked.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeLinked,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
+    if (existingbudgetsAmountToBeUpdated.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: existingbudgetsAmountToBeUpdated,
+        amount: curTxn.amount - prevTxn.amount,
+      });
+      console.log(
+        `Budget categories amount: added=${addCount}, updated=${updCount} `
+      );
+    }
+  } else if (isAmountUpdated) {
+    // Logic
+    /*
+    1. update amount
+    2. get exist budgets
+    3. update txn amount = curAmount-prevAmount to existing budgets
+    4. save
+    */
+    console.log("updating txn amount...");
+    const existingbudgetsAmountToBeUpdated = [...existingBudgets];
+    if (existingbudgetsAmountToBeUpdated.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: existingbudgetsAmountToBeUpdated,
+        amount: curTxn.amount - prevTxn.amount,
+      });
+      console.log(
+        `Budget categories amount: added=${addCount}, updated=${updCount} `
+      );
+    }
+  } else if (isCategoryUpdated) {
+    // Logic
+    /*
+    1. update category
+    2. get exist budgets
+    3. unlink txn and subtract txn amount for exist budget
+    4. Add txn with updated catgegory to exist budgets
+    5. save
+    */
+    console.log("updating txn category...");
+    const budgetsToBeUnlinked = [...existingBudgets];
+    const budgetsToBeLinked = [...existingBudgets];
+    if (budgetsToBeUnlinked.length) {
+      const unLinkedResult = await removeTxnFromBudgets({
+        ...prevTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeUnlinked,
+      });
+      console.log(`Unlink result : ${unLinkedResult}`);
+    }
+    if (budgetsToBeLinked.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeLinked,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
+  } else if (isBudgetUpdated) {
+    // Logic
+    /*
+    1. update category
+    2. get exist budgets
+    3. unlink txn and subtract txn amount for exist budget
+    4. Add txn with updated catgegory to exist budgets
+    5. save
+    */
+    console.log("updating txn budget...");
+    const budgetsToBeUnlinked = [...delBudgets];
+    const budgetsToBeLinked = [...newBudgets];
+    console.log("to be unlinked: ", budgetsToBeUnlinked);
+    console.log("to be linked: ", budgetsToBeLinked);
+    if (budgetsToBeUnlinked.length) {
+      const unLinkedResult = await removeTxnFromBudgets({
+        ...prevTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeUnlinked,
+      });
+      console.log(`Unlink result : ${unLinkedResult}`);
+    }
+    if (budgetsToBeLinked.length) {
+      const { updCount, addCount } = await addTxnToBudgets({
+        ...curTxn,
+        id: transactionId,
+        user: req.user._id,
+        budgets: budgetsToBeLinked,
+      });
+      console.log(`Budget categories: added=${addCount}, updated=${updCount} `);
+    }
+  }
+
+  updatedTxn = await updateTxn({
+    id: transactionId,
+    user: req.user._id,
+    ...curTxn,
+  });
+
   res.json({
     message: "update transaction successfuly",
-    data: updatedTransaction,
+    data: updatedTxn,
   });
 });
 
@@ -693,6 +964,17 @@ const deleteTransaction = asyncHandler(async (req, res, next) => {
   if (transaction.user.toString() !== req.user._id.toString()) {
     res.status(400);
     throw new Error(`Not authorized to access this Transaction`);
+  }
+
+  if (transaction.budgets.length) {
+    const budCatUpdResult = removeTxnFromBudgets({
+      id: transactionId,
+      user: req.user._id,
+      amount: transaction.amount,
+      category: transaction.category,
+      budgets: transaction.budgets,
+    });
+    console.log(`Budet cats updated : ${budCatUpdResult}`);
   }
 
   await transaction.remove();

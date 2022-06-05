@@ -29,9 +29,15 @@ const transactionSchema = Schema(
       required: [true, "Category is required"],
       ref: "Category",
     },
+    budgets: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Budget",
+      },
+    ],
     date: {
       type: Date,
-      default: moment(new Date()).format("YYYY-MM-DD"),
+      default: moment(new Date()),
     },
   },
   {
