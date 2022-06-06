@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const budgetCatCtrl = require("../controllers/budgetcategory.controller");
+const budgetCatCtrl = require("../controllers/budgetCategory.controller");
 const { protect } = require("../middlewares/auth.middleware");
 
 router
